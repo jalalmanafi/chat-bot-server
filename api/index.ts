@@ -1,10 +1,19 @@
 import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
+import multer from "multer";
+import { testConnection } from "../src/config/database";
+import * as ticketController from "../src/controllers/ticket.controller";
+import { logger } from "../src/utils/logger";
+import dotenv from "dotenv";
+
+// Load environment variables
+dotenv.config();
 
 const app = express();
+const upload = multer({ storage: multer.memoryStorage() });
 
-// CORS
+// CORS configuration
 const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:3000",
@@ -35,9 +44,15 @@ const apiLimiter = rateLimit({
   message: { error: "Too many requests" },
 });
 
+const ticketLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  message: { error: "Too many ticket creation requests" },
+});
+
 app.use("/api", apiLimiter);
 
-// Health check
+// Health check endpoints
 app.get("/", (req, res) => {
   res.json({
     status: "ok",
@@ -54,15 +69,16 @@ app.get("/api", (req, res) => {
   });
 });
 
-app.get("/health", (req, res) => {
+app.get("/health", async (req, res) => {
+  const dbConnected = await testConnection();
   res.json({
-    status: "healthy",
-    database: "connected",
+    status: dbConnected ? "healthy" : "degraded",
+    database: dbConnected ? "connected" : "disconnected",
     timestamp: new Date().toISOString(),
   });
 });
 
-// Simple templates for testing
+// Simple templates for chat responses
 const templates = {
   az: {
     general_help: "Salam! CityCard dəstək xidmətinə xoş gəlmisiniz!",
@@ -81,80 +97,32 @@ app.post("/api/chat/message", (req, res) => {
       return res.status(400).json({ error: "Message and language required" });
     }
 
+    logger.info("Chat message received", { message, language });
+
     res.json({
-      reply:
+      response:
         templates[language as "az" | "ru"]?.general_help ||
         templates.az.general_help,
       source: "rule",
       needsTicket: false,
     });
   } catch (error) {
+    logger.error("Chat message error", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// Tickets endpoints
-app.get("/api/tickets", (req, res) => {
-  res.json({
-    tickets: [],
-    total: 0,
-    message: "Tickets endpoint working",
-  });
-});
-
-// CREATE TICKET - This was missing!
-app.post("/api/tickets", (req, res) => {
-  try {
-    const { subject, description, contact, conversation, language, priority, source } = req.body;
-
-    // Validation
-    if (!subject || !description || !contact) {
-      return res.status(400).json({
-        status: "error",
-        message: "Subject, description, and contact are required"
-      });
-    }
-
-    if (!contact.name || !contact.phone || !contact.email) {
-      return res.status(400).json({
-        status: "error",
-        message: "Contact must include name, phone, and email"
-      });
-    }
-
-    // Generate ticket ID
-    const ticketId = `TKT-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
-
-    // Here you would normally save to database
-    // For now, we'll just return success
-    const ticketData = {
-      ticket_id: ticketId,
-      subject,
-      description,
-      contact,
-      conversation,
-      language: language || 'az',
-      priority: priority || 'normal',
-      source: source || 'web',
-      status: 'open',
-      created_at: new Date().toISOString()
-    };
-
-    console.log('Ticket created:', ticketData);
-
-    res.status(201).json({
-      status: "success",
-      message: "Ticket created successfully",
-      data: ticketData
-    });
-  } catch (error) {
-    console.error('Error creating ticket:', error);
-    res.status(500).json({
-      status: "error",
-      message: "Internal server error"
-    });
-  }
-});
+// Ticket endpoints - Use your existing controllers
+app.post("/api/tickets", ticketLimiter, ticketController.createTicket);
+app.get("/api/tickets", ticketController.getAllTickets);
+app.get("/api/tickets/:id", ticketController.getTicketById);
+app.put("/api/tickets/:id", ticketController.updateTicket);
+app.delete("/api/tickets/:id", ticketController.deleteTicket);
+app.post(
+  "/api/tickets/:id/receipt",
+  upload.single("file"),
+  ticketController.uploadReceipt
+);
 
 // 404 handler
 app.use((req, res) => {
@@ -164,14 +132,17 @@ app.use((req, res) => {
   });
 });
 
-// Error handler
+// Global error handler
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
-  console.error("Error:", err);
-  res.status(500).json({
+  logger.error("Error:", err);
+
+  const statusCode = err.statusCode || 500;
+  const message = err.message || "Internal server error";
+
+  res.status(statusCode).json({
     status: "error",
-    message: err.message || "Internal server error",
+    message: message,
   });
 });
 
-// Export for Vercel serverless
 export default app;
