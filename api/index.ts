@@ -93,13 +93,67 @@ app.post("/api/chat/message", (req, res) => {
   }
 });
 
-// Tickets endpoint
+// Tickets endpoints
 app.get("/api/tickets", (req, res) => {
   res.json({
     tickets: [],
     total: 0,
     message: "Tickets endpoint working",
   });
+});
+
+// CREATE TICKET - This was missing!
+app.post("/api/tickets", (req, res) => {
+  try {
+    const { subject, description, contact, conversation, language, priority, source } = req.body;
+
+    // Validation
+    if (!subject || !description || !contact) {
+      return res.status(400).json({
+        status: "error",
+        message: "Subject, description, and contact are required"
+      });
+    }
+
+    if (!contact.name || !contact.phone || !contact.email) {
+      return res.status(400).json({
+        status: "error",
+        message: "Contact must include name, phone, and email"
+      });
+    }
+
+    // Generate ticket ID
+    const ticketId = `TKT-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
+
+    // Here you would normally save to database
+    // For now, we'll just return success
+    const ticketData = {
+      ticket_id: ticketId,
+      subject,
+      description,
+      contact,
+      conversation,
+      language: language || 'az',
+      priority: priority || 'normal',
+      source: source || 'web',
+      status: 'open',
+      created_at: new Date().toISOString()
+    };
+
+    console.log('Ticket created:', ticketData);
+
+    res.status(201).json({
+      status: "success",
+      message: "Ticket created successfully",
+      data: ticketData
+    });
+  } catch (error) {
+    console.error('Error creating ticket:', error);
+    res.status(500).json({
+      status: "error",
+      message: "Internal server error"
+    });
+  }
 });
 
 // 404 handler
@@ -115,8 +169,9 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   console.error("Error:", err);
   res.status(500).json({
     status: "error",
-    message: "Internal server error",
+    message: err.message || "Internal server error",
   });
 });
 
+// Export for Vercel serverless
 export default app;
